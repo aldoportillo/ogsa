@@ -86,7 +86,7 @@ func TestModelAddProviderThenChat(t *testing.T) {
 	if !strings.Contains(out, "echo from https://llm.home/v1") {
 		t.Fatalf("chat did not use new provider:\n%s", out)
 	}
-	if len(seen) != 2 || len(seen[1].Messages) != 3 || seen[1].Model != "small" {
+	if len(seen) != 2 || len(seen[1].Messages) != 4 || seen[1].Model != "small" {
 		t.Fatalf("history not carried: %+v", seen)
 	}
 }
@@ -96,7 +96,7 @@ func TestModelDirectAndClear(t *testing.T) {
 	if r.Config.Model != "big" {
 		t.Fatalf("model = %q", r.Config.Model)
 	}
-	if len(seen) != 2 || len(seen[1].Messages) != 1 {
+	if len(seen) != 2 || len(seen[1].Messages) != 2 {
 		t.Fatalf("clear did not reset history: %+v\n%s", seen, out)
 	}
 }
@@ -147,5 +147,16 @@ func TestUnsupportedModelChatsWithoutTools(t *testing.T) {
 	}
 	if len(seen) != 1 || len(seen[0].Tools) != 0 {
 		t.Fatalf("tools sent to unsupported model: %+v", seen)
+	}
+}
+
+func TestSystemPromptLeadsEachRequest(t *testing.T) {
+	_, _, seen := run(t, "/model small\nhi\n")
+	if len(seen) != 1 {
+		t.Fatalf("seen = %+v", seen)
+	}
+	first := seen[0].Messages[0]
+	if first.Role != llm.RoleSystem || !strings.Contains(first.Content, "no tools") {
+		t.Fatalf("first message = %+v", first)
 	}
 }

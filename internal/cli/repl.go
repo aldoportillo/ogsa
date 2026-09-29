@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/aldoportillo/ogsa/internal/agent"
 	"github.com/aldoportillo/ogsa/internal/config"
@@ -21,6 +22,7 @@ type REPL struct {
 	Out         io.Writer
 	NewProvider func(config.Provider) llm.Provider
 	Tools       []agent.Tool
+	WorkDir     string
 
 	history []llm.Message
 }
@@ -113,8 +115,9 @@ func (r *REPL) chat(text string) error {
 		tools = nil
 	}
 
+	system := llm.Message{Role: llm.RoleSystem, Content: agent.SystemPrompt(r.WorkDir, len(tools) > 0, time.Now())}
 	msgs := append(r.history, llm.Message{Role: llm.RoleUser, Content: text})
-	turn, err := agent.Run(ctx, provider, r.Config.Model, tools, msgs, agent.Hooks{
+	turn, err := agent.Run(ctx, provider, r.Config.Model, tools, append([]llm.Message{system}, msgs...), agent.Hooks{
 		OnText: func(d string) { fmt.Fprint(r.Out, d) },
 		OnToolCall: func(c llm.ToolCall) {
 			fmt.Fprintf(r.Out, "\n→ %s %s\n", c.Name, c.Arguments)
