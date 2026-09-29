@@ -87,15 +87,39 @@ func (c *CompatClient) ListModels(ctx context.Context) ([]string, error) {
 	return ids, nil
 }
 
+type wireFunction struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments"`
+}
+
+type wireToolCall struct {
+	Index    *int         `json:"index,omitempty"`
+	ID       string       `json:"id,omitempty"`
+	Type     string       `json:"type,omitempty"`
+	Function wireFunction `json:"function"`
+}
+
 type wireMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+}
+
+type wireTool struct {
+	Type     string `json:"type"`
+	Function struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
+	} `json:"function"`
 }
 
 type chatChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			Content   string         `json:"content"`
+			ToolCalls []wireToolCall `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
 	Error *struct {
@@ -103,16 +127,74 @@ type chatChunk struct {
 	} `json:"error"`
 }
 
+func toWireMessage(m Message) wireMessage {
+	w := wireMessage{Role: string(m.Role), Content: m.Content, ToolCallID: m.ToolCallID}
+	for _, tc := range m.ToolCalls {
+		args := tc.Arguments
+		if args == "" {
+			args = "{}"
+		}
+		w.ToolCalls = append(w.ToolCalls, wireToolCall{
+			ID:       tc.ID,
+			Type:     "function",
+			Function: wireFunction{Name: tc.Name, Arguments: args},
+		})
+	}
+	return w
+}
+
+func toWireTool(s ToolSpec) wireTool {
+	var t wireTool
+	t.Type = "function"
+	t.Function.Name = s.Name
+	t.Function.Description = s.Description
+	t.Function.Parameters = s.Parameters
+	if len(t.Function.Parameters) == 0 {
+		t.Function.Parameters = json.RawMessage(`{"type":"object","properties":{}}`)
+	}
+	return t
+}
+
+func mergeToolCallDelta(calls []ToolCall, d wireToolCall) []ToolCall {
+	i := len(calls)
+	switch {
+	case d.Index != nil:
+		i = *d.Index
+	case d.ID == "" && d.Function.Name == "" && len(calls) > 0:
+		i = len(calls) - 1 // unindexed continuation of the previous call
+	}
+	for len(calls) <= i {
+		calls = append(calls, ToolCall{})
+	}
+	if d.ID != "" {
+		calls[i].ID = d.ID
+	}
+	if d.Function.Name != "" {
+		calls[i].Name = d.Function.Name
+	}
+	calls[i].Arguments += d.Function.Arguments
+	return calls
+}
+
 func (c *CompatClient) Chat(ctx context.Context, r Request, onDelta func(string)) (Message, error) {
 	msgs := make([]wireMessage, len(r.Messages))
 	for i, m := range r.Messages {
-		msgs[i] = wireMessage{Role: string(m.Role), Content: m.Content}
+		msgs[i] = toWireMessage(m)
 	}
-	req, err := c.newRequest(ctx, http.MethodPost, "/chat/completions", map[string]any{
+	body := map[string]any{
 		"model":    r.Model,
 		"messages": msgs,
 		"stream":   true,
-	})
+	}
+
+	if len(r.Tools) > 0 {
+		tools := make([]wireTool, len(r.Tools))
+		for i, s := range r.Tools {
+			tools[i] = toWireTool(s)
+		}
+		body["tools"] = tools
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, "/chat/completions", body)
 	if err != nil {
 		return Message{}, err
 	}
@@ -124,6 +206,7 @@ func (c *CompatClient) Chat(ctx context.Context, r Request, onDelta func(string)
 	defer resp.Body.Close()
 
 	var out strings.Builder
+	var calls []ToolCall
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for sc.Scan() {
@@ -149,9 +232,17 @@ func (c *CompatClient) Chat(ctx context.Context, r Request, onDelta func(string)
 					onDelta(d)
 				}
 			}
+			for _, d := range ch.Delta.ToolCalls {
+				calls = mergeToolCallDelta(calls, d)
+			}
 		}
 	}
-	msg := Message{Role: RoleAssistant, Content: out.String()}
+	for i := range calls {
+		if calls[i].ID == "" {
+			calls[i].ID = fmt.Sprintf("call_%d", i)
+		}
+	}
+	msg := Message{Role: RoleAssistant, Content: out.String(), ToolCalls: calls}
 	if err := sc.Err(); err != nil {
 		return msg, err
 	}

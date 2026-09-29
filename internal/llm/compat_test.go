@@ -91,3 +91,72 @@ func TestChatErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestChatToolCalls(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		for _, chunk := range []string{
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"grep","arguments":""}}]}}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"pattern\":"}}]}}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"TODO\"}"}}]}}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"name":"read","arguments":"{\"path\":\"a.go\"}"}}]}}]}`,
+		} {
+			fmt.Fprintf(w, "data: %s\n\n", chunk)
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	msg, err := NewCompatClient(srv.URL, "").Chat(context.Background(), Request{
+		Model: "m",
+		Messages: []Message{
+			{Role: RoleUser, Content: "find todos"},
+			{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "old", Name: "glob"}}},
+			{Role: RoleTool, ToolCallID: "old", Content: "a.go"},
+		},
+		Tools: []ToolSpec{{Name: "grep", Description: "search files"}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []ToolCall{
+		{ID: "call_a", Name: "grep", Arguments: `{"pattern":"TODO"}`},
+		{ID: "call_1", Name: "read", Arguments: `{"path":"a.go"}`},
+	}
+	if fmt.Sprint(msg.ToolCalls) != fmt.Sprint(want) {
+		t.Fatalf("tool calls = %+v", msg.ToolCalls)
+	}
+
+	tools := body["tools"].([]any)
+	fn := tools[0].(map[string]any)["function"].(map[string]any)
+	if fn["name"] != "grep" || fn["parameters"].(map[string]any)["type"] != "object" {
+		t.Fatalf("tools sent = %+v", tools)
+	}
+	msgs := body["messages"].([]any)
+	prior := msgs[1].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
+	if prior["id"] != "old" || prior["function"].(map[string]any)["arguments"] != "{}" {
+		t.Fatalf("assistant tool call sent = %+v", prior)
+	}
+	if msgs[2].(map[string]any)["tool_call_id"] != "old" {
+		t.Fatalf("tool result sent = %+v", msgs[2])
+	}
+}
+
+func TestChatOmitsEmptyTools(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if _, ok := body["tools"]; ok {
+			t.Error("tools field sent with no tools")
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	if _, err := NewCompatClient(srv.URL, "").Chat(context.Background(), Request{Model: "m"}, nil); err != nil {
+		t.Fatal(err)
+	}
+}
