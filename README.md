@@ -23,3 +23,5 @@ ogsa
 ## CLI Commands
 
 - /model -- select model from a list of providers. Manage providers and models.
+  - This also checks to ensure that the model you selected has tool support
+  - If the selected model does not support models you will be alerted
