@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/aldoportillo/ogsa/internal/agent"
 	"github.com/aldoportillo/ogsa/internal/config"
 	"github.com/aldoportillo/ogsa/internal/llm"
 )
@@ -14,9 +16,16 @@ type fakeProvider struct {
 	baseURL string
 	models  []string
 	seen    *[]llm.Request
+	support llm.ToolSupport
+	checks  *int
 }
 
 func (f fakeProvider) ListModels(context.Context) ([]string, error) { return f.models, nil }
+
+func (f fakeProvider) CheckTools(context.Context, string) (llm.ToolSupport, error) {
+	*f.checks++
+	return f.support, nil
+}
 
 func (f fakeProvider) Chat(_ context.Context, req llm.Request, onDelta func(string)) (llm.Message, error) {
 	*f.seen = append(*f.seen, req)
@@ -27,6 +36,12 @@ func (f fakeProvider) Chat(_ context.Context, req llm.Request, onDelta func(stri
 
 func run(t *testing.T, input string) (*REPL, string, []llm.Request) {
 	t.Helper()
+	r, out, seen, _ := runWith(t, input, llm.ToolsSupported)
+	return r, out, seen
+}
+
+func runWith(t *testing.T, input string, support llm.ToolSupport) (*REPL, string, []llm.Request, int) {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -34,9 +49,10 @@ func run(t *testing.T, input string) (*REPL, string, []llm.Request) {
 	}
 	var out strings.Builder
 	var seen []llm.Request
+	var checks int
 	r := New(cfg, strings.NewReader(input), &out)
 	r.NewProvider = func(p config.Provider) llm.Provider {
-		return fakeProvider{baseURL: p.BaseURL, models: []string{"small", "big"}, seen: &seen}
+		return fakeProvider{baseURL: p.BaseURL, models: []string{"small", "big"}, seen: &seen, support: support, checks: &checks}
 	}
 	if err := r.Run(); err != nil {
 		t.Fatal(err)
@@ -46,7 +62,7 @@ func run(t *testing.T, input string) (*REPL, string, []llm.Request) {
 		t.Fatal(err)
 	}
 	r.Config = saved
-	return r, out.String(), seen
+	return r, out.String(), seen, checks
 }
 
 func TestModelPickFromList(t *testing.T) {
@@ -89,5 +105,47 @@ func TestChatWithoutModel(t *testing.T) {
 	_, out, seen := run(t, "hi\n")
 	if len(seen) != 0 || !strings.Contains(out, "no model selected") {
 		t.Fatalf("expected guard, got:\n%s", out)
+	}
+}
+
+type noopTool struct{}
+
+func (noopTool) Spec() llm.ToolSpec { return llm.ToolSpec{Name: "noop"} }
+
+func (noopTool) Run(context.Context, json.RawMessage) (string, error) { return "", nil }
+
+func TestModelCheckRecordsSupportOnce(t *testing.T) {
+	// Picking the same model twice checks once; /model check forces another.
+	r, out, _, checks := runWith(t, "/model\n\n1\n/model\n\n1\n/model check\n", llm.ToolsSupported)
+	if checks != 2 {
+		t.Fatalf("checks = %d, want 2\n%s", checks, out)
+	}
+	if got := r.Config.ModelInfo("ollama", "small").Tools; got != llm.ToolsSupported {
+		t.Fatalf("saved tools = %q", got)
+	}
+	if !strings.Contains(out, "tools: supported") {
+		t.Fatalf("status line missing tools:\n%s", out)
+	}
+}
+
+func TestUnsupportedModelChatsWithoutTools(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg, _ := config.Load(path)
+	var out strings.Builder
+	var seen []llm.Request
+	var checks int
+	r := New(cfg, strings.NewReader("/model tiny\nhi\n"), &out)
+	r.Tools = []agent.Tool{noopTool{}}
+	r.NewProvider = func(p config.Provider) llm.Provider {
+		return fakeProvider{baseURL: p.BaseURL, seen: &seen, support: llm.ToolsUnsupported, checks: &checks}
+	}
+	if err := r.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "plain chat only") {
+		t.Fatalf("no warning:\n%s", out.String())
+	}
+	if len(seen) != 1 || len(seen[0].Tools) != 0 {
+		t.Fatalf("tools sent to unsupported model: %+v", seen)
 	}
 }

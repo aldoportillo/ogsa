@@ -81,7 +81,11 @@ func (r *REPL) printCurrent() {
 	if model == "" {
 		model = "(none — run /model)"
 	}
-	fmt.Fprintf(r.Out, "provider: %s  model: %s\n", r.Config.Provider, model)
+	fmt.Fprintf(r.Out, "provider: %s  model: %s", r.Config.Provider, model)
+	if t := r.Config.ModelInfo(r.Config.Provider, r.Config.Model).Tools; t != llm.ToolsUnknown {
+		fmt.Fprintf(r.Out, "  tools: %s", t)
+	}
+	fmt.Fprintln(r.Out)
 }
 
 func (r *REPL) activeProvider() (llm.Provider, error) {
@@ -104,8 +108,13 @@ func (r *REPL) chat(text string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	tools := r.Tools
+	if r.Config.ModelInfo(r.Config.Provider, r.Config.Model).Tools == llm.ToolsUnsupported {
+		tools = nil
+	}
+
 	msgs := append(r.history, llm.Message{Role: llm.RoleUser, Content: text})
-	turn, err := agent.Run(ctx, provider, r.Config.Model, r.Tools, msgs, agent.Hooks{
+	turn, err := agent.Run(ctx, provider, r.Config.Model, tools, msgs, agent.Hooks{
 		OnText: func(d string) { fmt.Fprint(r.Out, d) },
 		OnToolCall: func(c llm.ToolCall) {
 			fmt.Fprintf(r.Out, "\n→ %s %s\n", c.Name, c.Arguments)
