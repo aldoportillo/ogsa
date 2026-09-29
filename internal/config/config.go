@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/aldoportillo/ogsa/internal/llm"
 )
 
 type Provider struct {
@@ -25,8 +27,25 @@ type Config struct {
 	Providers []Provider `json:"providers"`
 	Provider  string     `json:"provider"`
 	Model     string     `json:"model"`
+	// Models caches what we've learned about each model, keyed "provider/model".
+	Models map[string]ModelInfo `json:"models,omitempty"`
 
 	path string
+}
+
+type ModelInfo struct {
+	Tools llm.ToolSupport `json:"tools,omitempty"`
+}
+
+func (c *Config) ModelInfo(provider, model string) ModelInfo {
+	return c.Models[provider+"/"+model]
+}
+
+func (c *Config) SetModelInfo(provider, model string, info ModelInfo) {
+	if c.Models == nil {
+		c.Models = map[string]ModelInfo{}
+	}
+	c.Models[provider+"/"+model] = info
 }
 
 func Default() *Config {
