@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 
+	"github.com/aldoportillo/ogsa/internal/agent"
 	"github.com/aldoportillo/ogsa/internal/config"
 	"github.com/aldoportillo/ogsa/internal/llm"
 )
@@ -19,6 +20,7 @@ type REPL struct {
 	In          *bufio.Reader
 	Out         io.Writer
 	NewProvider func(config.Provider) llm.Provider
+	Tools       []agent.Tool
 
 	history []llm.Message
 }
@@ -103,8 +105,16 @@ func (r *REPL) chat(text string) error {
 	defer stop()
 
 	msgs := append(r.history, llm.Message{Role: llm.RoleUser, Content: text})
-	reply, err := provider.Chat(ctx, llm.Request{Model: r.Config.Model, Messages: msgs}, func(d string) {
-		fmt.Fprint(r.Out, d)
+	turn, err := agent.Run(ctx, provider, r.Config.Model, r.Tools, msgs, agent.Hooks{
+		OnText: func(d string) { fmt.Fprint(r.Out, d) },
+		OnToolCall: func(c llm.ToolCall) {
+			fmt.Fprintf(r.Out, "\n→ %s %s\n", c.Name, c.Arguments)
+		},
+		OnToolResult: func(c llm.ToolCall, _ string, err error) {
+			if err != nil {
+				fmt.Fprintf(r.Out, "✗ %s: %v\n", c.Name, err)
+			}
+		},
 	})
 	fmt.Fprintln(r.Out)
 	if ctx.Err() != nil {
@@ -114,6 +124,6 @@ func (r *REPL) chat(text string) error {
 	if err != nil {
 		return err
 	}
-	r.history = append(msgs, reply)
+	r.history = append(msgs, turn...)
 	return nil
 }
