@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
+	"time"
 )
 
 type CompatClient struct {
@@ -247,4 +249,71 @@ func (c *CompatClient) Chat(ctx context.Context, r Request, onDelta func(string)
 		return msg, err
 	}
 	return msg, nil
+}
+
+func (c *CompatClient) CheckTools(ctx context.Context, model string) (ToolSupport, error) {
+	for _, lookup := range []func(context.Context, string) (ToolSupport, bool){c.ollamaTools, c.litellmTools} {
+		mctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		s, ok := lookup(mctx, model)
+		cancel()
+		if ok {
+			return s, nil
+		}
+	}
+	return ProbeTools(ctx, c, model)
+}
+
+func (c *CompatClient) ollamaTools(ctx context.Context, model string) (ToolSupport, bool) {
+	native := &CompatClient{BaseURL: strings.TrimSuffix(c.BaseURL, "/v1"), APIKey: c.APIKey, HTTP: c.HTTP}
+	req, err := native.newRequest(ctx, http.MethodPost, "/api/show", map[string]string{"model": model})
+	if err != nil {
+		return ToolsUnknown, false
+	}
+	resp, err := c.do(req)
+	if err != nil {
+		return ToolsUnknown, false
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Capabilities *[]string `json:"capabilities"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&body) != nil || body.Capabilities == nil {
+		return ToolsUnknown, false
+	}
+	if slices.Contains(*body.Capabilities, "tools") {
+		return ToolsSupported, true
+	}
+	return ToolsUnsupported, true
+}
+
+func (c *CompatClient) litellmTools(ctx context.Context, model string) (ToolSupport, bool) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/model/info", nil)
+	if err != nil {
+		return ToolsUnknown, false
+	}
+	resp, err := c.do(req)
+	if err != nil {
+		return ToolsUnknown, false
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Data []struct {
+			ModelName string `json:"model_name"`
+			ModelInfo struct {
+				SupportsFunctionCalling *bool `json:"supports_function_calling"`
+			} `json:"model_info"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&body) != nil {
+		return ToolsUnknown, false
+	}
+	for _, m := range body.Data {
+		if m.ModelName == model && m.ModelInfo.SupportsFunctionCalling != nil {
+			if *m.ModelInfo.SupportsFunctionCalling {
+				return ToolsSupported, true
+			}
+			return ToolsUnsupported, true
+		}
+	}
+	return ToolsUnknown, false
 }
