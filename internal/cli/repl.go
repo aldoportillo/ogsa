@@ -29,7 +29,7 @@ func New(cfg *config.Config, in io.Reader, out io.Writer) *REPL {
 		In:     bufio.NewReader(in),
 		Out:    out,
 		NewProvider: func(p config.Provider) llm.Provider {
-			return llm.NewOpenAICompat(p.BaseURL, p.APIKey())
+			return llm.NewCompatClient(p.BaseURL, p.APIKey())
 		},
 	}
 }
