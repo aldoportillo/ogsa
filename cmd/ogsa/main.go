@@ -6,6 +6,7 @@ import (
 
 	"github.com/aldoportillo/ogsa/internal/cli"
 	"github.com/aldoportillo/ogsa/internal/config"
+	"github.com/aldoportillo/ogsa/internal/tools"
 )
 
 func main() {
@@ -24,5 +25,18 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("loading %s: %w", path, err)
 	}
-	return cli.New(cfg, os.Stdin, os.Stdout).Run()
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	root, err := tools.OpenRoot(wd)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	r := cli.New(cfg, os.Stdin, os.Stdout)
+	r.WorkDir = root.Dir
+	r.Tools = root.ReadOnly()
+	return r.Run()
 }
