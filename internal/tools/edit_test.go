@@ -144,3 +144,48 @@ func TestUnifiedDiff(t *testing.T) {
 		}
 	}
 }
+
+func TestEditNotFoundExplains(t *testing.T) {
+	r := project(t)
+	os.WriteFile(filepath.Join(r.Dir, "py.py"), []byte("def f():\n    return 1\n"), 0o644)
+	tests := []struct{ name, args, want string }{
+		{
+			"extra tab (the bug that prompted this)",
+			`{"path":"main.go","old_string":"\t\t// TODO: wire up","new_string":"x"}`,
+			"matches line 4 if whitespace is ignored. Copy the indentation exactly: line 4 starts with 1 tab, your old_string has 2 tabs",
+		},
+		{
+			"spaces instead of tabs, multi-line",
+			`{"path":"main.go","old_string":"func main() {\n    // TODO: wire up\n}","new_string":"x"}`,
+			"line 4 starts with 1 tab, your old_string has 4 spaces",
+		},
+		{
+			"too many spaces",
+			`{"path":"py.py","old_string":"      return 1","new_string":"x"}`,
+			"line 2 starts with 4 spaces, your old_string has 6 spaces",
+		},
+		{
+			"read prefix copied",
+			`{"path":"main.go","old_string":"     4|\t// TODO: wire up","new_string":"x"}`,
+			"line-number prefixes",
+		},
+		{
+			"mid-line start is not blamed on indentation",
+			`{"path":"main.go","old_string":"TODO:  wire up","new_string":"x"}`,
+			"matches line 4 if whitespace is ignored; check spaces",
+		},
+		{
+			"genuinely absent",
+			`{"path":"main.go","old_string":"nothing like this","new_string":"x"}`,
+			"read the file and copy the text exactly",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := (editTool{r}).Preview(context.Background(), json.RawMessage(tt.args))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v\nwant containing %q", err, tt.want)
+			}
+		})
+	}
+}

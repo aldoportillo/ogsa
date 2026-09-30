@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/aldoportillo/ogsa/internal/llm"
 )
 
-// writable resolves a path the model wants to change. On top of the root's
-// confinement, it keeps the model out of .git.
 func (r *Root) writable(p string) (string, error) {
 	rel, err := r.rel(p)
 	if err != nil {
@@ -89,7 +88,7 @@ func (t editTool) plan(raw json.RawMessage) (editPlan, error) {
 	before := string(data)
 	switch n := strings.Count(before, args.Old); {
 	case n == 0:
-		return editPlan{}, fmt.Errorf("old_string not found in %s; read the file and copy the text exactly", p)
+		return editPlan{}, notFound(p, before, args.Old)
 	case n > 1 && !args.ReplaceAll:
 		return editPlan{}, fmt.Errorf("old_string appears %d times in %s; add surrounding lines to make it unique, or set replace_all", n, p)
 	default:
@@ -200,4 +199,89 @@ func (t writeTool) Run(_ context.Context, raw json.RawMessage) (string, error) {
 		verb = "overwrote"
 	}
 	return fmt.Sprintf("%s %s (%d bytes)", verb, pl.path, len(pl.content)), nil
+}
+
+var readPrefix = regexp.MustCompile(`(?m)^\s*\d+\|`)
+
+func notFound(path, content, old string) error {
+	if readPrefix.MatchString(old) && !readPrefix.MatchString(content) {
+		return fmt.Errorf("old_string not found in %s: it contains line-number prefixes (like \"14|\") copied from read output; remove them", path)
+	}
+	fileLines, oldLines := splitLines(content), splitLines(old)
+	if at, ok := matchIgnoringIndent(fileLines, oldLines); ok {
+		for j, o := range oldLines {
+			if j == 0 && leadingSpace(o) == "" {
+				continue // old_string may start mid-line
+			}
+			if f := fileLines[at+j]; leadingSpace(f) != leadingSpace(o) {
+				return fmt.Errorf("old_string not found in %s, but it matches line %d if whitespace is ignored. "+
+					"Copy the indentation exactly: line %d starts with %s, your old_string has %s",
+					path, at+1, at+j+1, describeIndent(f), describeIndent(o))
+			}
+		}
+		return fmt.Errorf("old_string not found in %s, but it matches line %d if whitespace is ignored; check spaces and trailing whitespace", path, at+1)
+	}
+	return fmt.Errorf("old_string not found in %s; read the file and copy the text exactly", path)
+}
+
+func matchIgnoringIndent(file, old []string) (int, bool) {
+	if strings.TrimSpace(strings.Join(old, "")) == "" {
+		return 0, false
+	}
+	for i := 0; i+len(old) <= len(file); i++ {
+		if linesMatch(file[i:i+len(old)], old) {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func linesMatch(file, old []string) bool {
+	last := len(old) - 1
+	for j := range old {
+		f, o := squash(file[j]), squash(old[j])
+		var ok bool
+		switch {
+		case last == 0:
+			ok = strings.Contains(f, o)
+		case j == 0:
+			ok = strings.HasSuffix(f, o)
+		case j == last:
+			ok = strings.HasPrefix(f, o)
+		default:
+			ok = f == o
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func squash(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+func leadingSpace(s string) string {
+	return s[:len(s)-len(strings.TrimLeft(s, " \t"))]
+}
+
+func describeIndent(s string) string {
+	ws := leadingSpace(s)
+	if ws == "" {
+		return "no indentation"
+	}
+	count := func(n int, unit string) string {
+		if n == 1 {
+			return "1 " + unit
+		}
+		return fmt.Sprintf("%d %ss", n, unit)
+	}
+	tabs := strings.Count(ws, "\t")
+	switch spaces := len(ws) - tabs; {
+	case spaces == 0:
+		return count(tabs, "tab")
+	case tabs == 0:
+		return count(spaces, "space")
+	default:
+		return count(tabs, "tab") + " and " + count(spaces, "space")
+	}
 }
