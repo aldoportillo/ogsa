@@ -24,7 +24,8 @@ type readTool struct{ r *Root }
 func (readTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: "read",
-		Description: "Read a text file. Output lines are prefixed with their line number. " +
+		Description: "Read a text file. Each output line is \"<line number>|<content>\": the file's text starts " +
+			"immediately after the |, including its indentation. Never copy the number or | into an edit. " +
 			fmt.Sprintf("Returns at most %d lines per call; use offset to continue.", defaultReadLines),
 		Parameters: json.RawMessage(`{
 			"type": "object",
@@ -89,7 +90,7 @@ func (t readTool) Run(_ context.Context, raw json.RawMessage) (string, error) {
 		if shown == limit {
 			continue
 		}
-		fmt.Fprintf(&b, "%6d\t%s\n", n, truncateLine(sc.Text(), maxReadLineLen))
+		fmt.Fprintf(&b, "%6d|%s\n", n, truncateLine(sc.Text(), maxReadLineLen))
 		shown++
 	}
 	switch {
