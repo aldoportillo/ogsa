@@ -25,7 +25,8 @@ func (grepTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name: "grep",
 		Description: "Search file contents with a regular expression (Go RE2 syntax). " +
-			"Returns matching lines as path:line: text. Skips binary files and .git/node_modules.",
+			"Returns matching lines as path:line:content, where content starts right after the second colon. " +
+			"Skips binary files and .git/node_modules.",
 		Parameters: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -91,7 +92,7 @@ func (t grepTool) Run(ctx context.Context, raw json.RawMessage) (string, error) 
 			if re.Match(sc.Bytes()) {
 				total++
 				if len(found) < maxGrepMatches {
-					found = append(found, fmt.Sprintf("%s:%d: %s", path, n, truncateLine(sc.Text(), maxLineLen)))
+					found = append(found, fmt.Sprintf("%s:%d:%s", path, n, truncateLine(sc.Text(), maxLineLen)))
 				}
 			}
 		}

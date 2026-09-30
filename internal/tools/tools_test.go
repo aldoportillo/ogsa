@@ -90,9 +90,9 @@ func TestGlobToRegexp(t *testing.T) {
 func TestGrep(t *testing.T) {
 	r := project(t)
 	tests := []struct{ args, want string }{
-		{`{"pattern":"TODO"}`, "main.go:4: \t// TODO: wire up"},
-		{`{"pattern":"todo","ignore_case":true,"glob":"*.ts"}`, "web/app.ts:1: // todo: styles"},
-		{`{"pattern":"func \\w+","path":"internal"}`, "internal/llm/compat.go:3: func NewCompatClient() {}"},
+		{`{"pattern":"TODO"}`, "main.go:4:\t// TODO: wire up"},
+		{`{"pattern":"todo","ignore_case":true,"glob":"*.ts"}`, "web/app.ts:1:// todo: styles"},
+		{`{"pattern":"func \\w+","path":"internal"}`, "internal/llm/compat.go:3:func NewCompatClient() {}"},
 		{`{"pattern":"nothing-here"}`, "no matches"},
 	}
 	for _, tt := range tests {
@@ -119,18 +119,18 @@ func TestGrepLimit(t *testing.T) {
 func TestRead(t *testing.T) {
 	r := project(t)
 	got, err := call(t, readTool{r}, `{"path":"main.go"}`)
-	if err != nil || !strings.HasPrefix(got, "     1\tpackage main\n") || !strings.Contains(got, "     4\t\t// TODO") {
+	if err != nil || !strings.HasPrefix(got, "     1|package main\n") || !strings.Contains(got, "     4|\t// TODO") {
 		t.Fatalf("read = %q, %v", got, err)
 	}
 
 	got, err = call(t, readTool{r}, `{"path":"main.go","offset":2,"limit":2}`)
-	want := "     2\t\n     3\tfunc main() {\n(showing lines 2-3 of 5; use offset=4 to continue)"
+	want := "     2|\n     3|func main() {\n(showing lines 2-3 of 5; use offset=4 to continue)"
 	if err != nil || got != want {
 		t.Fatalf("paged read = %q, %v", got, err)
 	}
 
 	abs := filepath.Join(r.Dir, "README.md")
-	if got, err := call(t, readTool{r}, fmt.Sprintf(`{"path":%q}`, abs)); err != nil || got != "     1\t# demo\n" {
+	if got, err := call(t, readTool{r}, fmt.Sprintf(`{"path":%q}`, abs)); err != nil || got != "     1|# demo\n" {
 		t.Fatalf("absolute path read = %q, %v", got, err)
 	}
 }
