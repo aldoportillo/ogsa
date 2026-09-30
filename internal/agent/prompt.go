@@ -21,6 +21,8 @@ func SystemPrompt(workDir string, hasTools bool, now time.Time) string {
 - If a search finds nothing, try other terms (synonyms, partial names, different casing) before concluding something doesn't exist.
 - Paths are relative to the project root.
 - Refer to code as path:line so the user can jump to it.
+- To change code, read the file first, then prefer edit (exact text replacement) over rewriting whole files with write.
+- Make the smallest change that does what the user asked. The user approves each change; if they decline, ask what they want instead of retrying.
 - Be concise. Answer the question, then stop.
 `)
 	return b.String()
