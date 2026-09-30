@@ -39,6 +39,10 @@ func (r *Root) ReadOnly() []agent.Tool {
 	return []agent.Tool{globTool{r}, grepTool{r}, readTool{r}}
 }
 
+func (r *Root) Mutating() []agent.Tool {
+	return []agent.Tool{editTool{r}, writeTool{r}}
+}
+
 func (r *Root) rel(path string) (string, error) {
 	if path == "" {
 		return ".", nil
