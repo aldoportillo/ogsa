@@ -37,6 +37,12 @@ func run() error {
 
 	r := cli.New(cfg, os.Stdin, os.Stdout)
 	r.WorkDir = root.Dir
-	r.Tools = root.ReadOnly()
+	r.Tools = append(root.ReadOnly(), root.Mutating()...)
+	r.Color = isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == ""
 	return r.Run()
+}
+
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
