@@ -19,7 +19,7 @@ import (
 
 const fakeSecret = "8f3kQ9x2Lm4Np7Rs1Tv6Wy0Za5Bc3De"
 
-func session(t *testing.T, input string, setup func(*config.Config)) (string, *config.Config) {
+func runSession(t *testing.T, input string, setup func(*config.Config)) (string, *config.Config) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg, err := config.Load(path)
@@ -48,7 +48,7 @@ func session(t *testing.T, input string, setup func(*config.Config)) (string, *c
 
 func TestAddStoresPastedKey(t *testing.T) {
 	input := "/model\na\nwork\nhttps://llm.work/v1\n" + fakeSecret + "\n1\n/model\nq\n"
-	out, cfg := session(t, input, nil)
+	out, cfg := runSession(t, input, nil)
 	if strings.Contains(out, fakeSecret) {
 		t.Fatal("the key was printed")
 	}
@@ -64,7 +64,7 @@ func TestAddStoresPastedKey(t *testing.T) {
 }
 func TestAddValidatesAndNormalizes(t *testing.T) {
 	input := "/model\na\n\nollama\nwork\nlocalhost:8000\nhttp://gpu:8000/v1/chat/completions/\n$WORK_KEY\n2\n"
-	out, cfg := session(t, input, nil)
+	out, cfg := runSession(t, input, nil)
 	for _, want := range []string{
 		"a name is required",
 		"already exists",
@@ -87,7 +87,7 @@ func TestAddValidatesAndNormalizes(t *testing.T) {
 }
 
 func TestAddCancel(t *testing.T) {
-	out, cfg := session(t, "/model\na\nwork\nq\nq\n", nil)
+	out, cfg := runSession(t, "/model\na\nwork\nq\nq\n", nil)
 	if _, ok := cfg.Find("work"); ok || !strings.Contains(out, "cancelled; nothing was saved") {
 		t.Fatalf("cancel failed:\n%s", out)
 	}
@@ -97,7 +97,7 @@ func TestRemoveProvider(t *testing.T) {
 	setup := func(c *config.Config) {
 		c.Upsert(config.Provider{Name: "cloud", BaseURL: "https://x/v1", Key: fakeSecret})
 	}
-	out, cfg := session(t, "/model\nr 2\ny\nr1\nn\nq\n", setup)
+	out, cfg := runSession(t, "/model\nr 2\ny\nr1\nn\nq\n", setup)
 	if _, ok := cfg.Find("cloud"); ok {
 		t.Fatal("cloud not removed")
 	}
@@ -110,7 +110,7 @@ func TestRemoveProvider(t *testing.T) {
 	}
 }
 func TestRemoveActiveProviderClearsSelection(t *testing.T) {
-	out, cfg := session(t, "/model\nr 1\ny\nq\n", func(c *config.Config) { c.Model = "small" })
+	out, cfg := runSession(t, "/model\nr 1\ny\nq\n", func(c *config.Config) { c.Model = "small" })
 	if cfg.Provider != "" || cfg.Model != "" || !strings.Contains(out, "that was the current provider") {
 		t.Fatalf("selection = %q/%q\n%s", cfg.Provider, cfg.Model, out)
 	}
@@ -129,7 +129,7 @@ func TestEditProvider(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, cfg := session(t, "/model\ne 2\n\nhttps://y/v1\n"+tt.keyInput+"\nq\n", setup)
+			out, cfg := runSession(t, "/model\ne 2\n\nhttps://y/v1\n"+tt.keyInput+"\nq\n", setup)
 			p, _ := cfg.Find("cloud")
 			if p.Key != tt.wantKey || p.BaseURL != tt.wantURL || !strings.Contains(out, "✓ saved cloud") {
 				t.Fatalf("url = %q, key matches = %v\n%s", p.BaseURL, p.Key == tt.wantKey, out)
@@ -145,7 +145,7 @@ func TestInvalidKeySettingIsNeverShown(t *testing.T) {
 		c.Upsert(config.Provider{Name: "Azure", BaseURL: "https://x.example/v1", APIKeyEnv: fakeSecret})
 		c.Provider, c.Model = "Azure", "m"
 	}
-	out, cfg := session(t, "/model\ne 2\n\n\nreal-key-456\nq\n", setup)
+	out, cfg := runSession(t, "/model\ne 2\n\n\nreal-key-456\nq\n", setup)
 	if strings.Contains(out, fakeSecret) {
 		t.Fatal("the stored key was printed")
 	}

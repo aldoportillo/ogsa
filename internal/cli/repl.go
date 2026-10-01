@@ -14,6 +14,7 @@ import (
 	"github.com/aldoportillo/ogsa/internal/agent"
 	"github.com/aldoportillo/ogsa/internal/config"
 	"github.com/aldoportillo/ogsa/internal/llm"
+	"github.com/aldoportillo/ogsa/internal/session"
 )
 
 type REPL struct {
@@ -25,8 +26,10 @@ type REPL struct {
 	Tools       []agent.Tool
 	WorkDir     string
 	Color       bool
+	Sessions    *session.Store
 
 	history []llm.Message
+	session *session.Session
 }
 
 func New(cfg *config.Config, in io.Reader, out io.Writer) *REPL {
@@ -63,6 +66,9 @@ func (r *REPL) Run() error {
 	r.printCurrent()
 	if p, ok := r.Config.Active(); ok && strings.HasPrefix(keyStatus(p), "⚠") {
 		fmt.Fprintf(r.Out, "%s: %s — run /model to fix it\n", p.Name, keyStatus(p))
+	}
+	if len(r.history) == 0 {
+		r.hintLastSession()
 	}
 	for {
 		line, err := r.prompt("\n> ")
@@ -142,22 +148,41 @@ func (r *REPL) chat(text string) error {
 		tools = nil
 	}
 
-	system := llm.Message{Role: llm.RoleSystem, Content: agent.SystemPrompt(r.WorkDir, len(tools) > 0, time.Now())}
-	msgs := append(r.history, llm.Message{Role: llm.RoleUser, Content: text})
-	turn, err := agent.Run(ctx, provider, r.Config.Model, tools, append([]llm.Message{system}, msgs...), r.hooks(ctx))
+	system := llm.Message{Role: llm.RoleSystem, Content: agent.SystemPrompt(r.WorkDir, len(tools) > 0, time.Now(), r.projectInstructions())}
+	user := llm.Message{Role: llm.RoleUser, Content: text}
+	history := append(append([]llm.Message{system}, r.history...), user)
+	turn, err := agent.Run(ctx, provider, r.Config.Model, tools, history, r.hooks(ctx))
 	fmt.Fprintln(r.Out)
-	if ctx.Err() != nil {
+
+	if len(turn) > 0 {
+		r.record(append([]llm.Message{user}, turn...)...)
+	}
+	switch {
+	case ctx.Err() != nil && len(turn) > 0:
+		fmt.Fprintln(r.Out, "(cancelled; kept what was done so far)")
+		return nil
+	case ctx.Err() != nil:
 		fmt.Fprintln(r.Out, "(cancelled)")
 		return nil
-	}
-	if err != nil && !errors.Is(err, agent.ErrRepeatedFailure) {
+	case err != nil && !errors.Is(err, agent.ErrRepeatedFailure):
 		if p, ok := r.Config.Active(); ok {
 			return errors.New(explainErr(err, p))
 		}
-		return err
 	}
-	r.history = append(msgs, turn...)
 	return err
+}
+
+func (r *REPL) record(msgs ...llm.Message) {
+	r.history = append(r.history, msgs...)
+	if r.Sessions == nil {
+		return
+	}
+	if r.session == nil {
+		r.session = r.Sessions.New()
+	}
+	if err := r.session.Append(msgs...); err != nil {
+		fmt.Fprintln(r.Out, "warning: couldn't save the session:", err)
+	}
 }
 
 func (r *REPL) hooks(ctx context.Context) agent.Hooks {

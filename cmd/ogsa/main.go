@@ -1,11 +1,14 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/aldoportillo/ogsa/internal/cli"
 	"github.com/aldoportillo/ogsa/internal/config"
+	"github.com/aldoportillo/ogsa/internal/session"
 	"github.com/aldoportillo/ogsa/internal/tools"
 	"golang.org/x/term"
 )
@@ -18,6 +21,10 @@ func main() {
 }
 
 func run() error {
+	cont := flag.Bool("c", false, "continue this project's most recent conversation")
+	flag.BoolVar(cont, "continue", false, "same as -c")
+	flag.Parse()
+
 	path, err := config.Path()
 	if err != nil {
 		return err
@@ -38,6 +45,12 @@ func run() error {
 
 	r := cli.New(cfg, os.Stdin, os.Stdout)
 	r.WorkDir = root.Dir
+	r.Sessions = session.ForProject(filepath.Dir(cfg.File()), root.Dir)
+	if *cont {
+		if err := r.ContinueLast(); err != nil {
+			return err
+		}
+	}
 	r.Tools = append(root.ReadOnly(), root.Mutating()...)
 	r.Color = isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == ""
 	if isTerminal(os.Stdout) {

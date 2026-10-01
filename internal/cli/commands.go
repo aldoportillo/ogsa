@@ -22,7 +22,9 @@ var commands []command
 func init() {
 	commands = []command{
 		{"/model", "/model [name|check]", "pick a provider and model, set one directly, or re-check tool support", (*REPL).cmdModel},
-		{"/clear", "/clear", "clear the conversation history", (*REPL).cmdClear},
+		{"/clear", "/clear", "start a new conversation (the current one stays saved)", (*REPL).cmdClear},
+		{"/resume", "/resume", "continue a saved conversation from this project", (*REPL).cmdResume},
+		{"/init", "/init", "have the model write .ogsa/OGSA.md, a guide to this project", (*REPL).cmdInit},
 		{"/help", "/help", "show this help", (*REPL).cmdHelp},
 		{"/exit", "/exit", "quit ogsa", func(*REPL, string) (bool, error) { return true, nil }},
 	}
@@ -49,8 +51,12 @@ func (r *REPL) cmdHelp(string) (bool, error) {
 }
 
 func (r *REPL) cmdClear(string) (bool, error) {
-	r.history = nil
-	fmt.Fprintln(r.Out, "history cleared")
+	r.history, r.session = nil, nil
+	if r.Sessions != nil {
+		fmt.Fprintln(r.Out, "started a new conversation; /resume brings back the previous one")
+	} else {
+		fmt.Fprintln(r.Out, "history cleared")
+	}
 	return false, nil
 }
 
