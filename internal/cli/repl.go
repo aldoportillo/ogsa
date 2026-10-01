@@ -21,6 +21,7 @@ type REPL struct {
 	In          *bufio.Reader
 	Out         io.Writer
 	NewProvider func(config.Provider) llm.Provider
+	ReadSecret  func(label string) (string, error)
 	Tools       []agent.Tool
 	WorkDir     string
 	Color       bool
@@ -29,19 +30,40 @@ type REPL struct {
 }
 
 func New(cfg *config.Config, in io.Reader, out io.Writer) *REPL {
-	return &REPL{
+	r := &REPL{
 		Config: cfg,
 		In:     bufio.NewReader(in),
 		Out:    out,
-		NewProvider: func(p config.Provider) llm.Provider {
-			return llm.NewCompatClient(p.BaseURL, p.APIKey())
-		},
+	}
+	r.NewProvider = func(p config.Provider) llm.Provider {
+		return &llm.Client{
+			BaseURL:  p.BaseURL,
+			APIKey:   p.APIKey(),
+			API:      p.API,
+			OnDetect: func(d llm.Detection) { r.rememberDetection(p, d) },
+		}
+	}
+	return r
+}
+
+func (r *REPL) rememberDetection(was config.Provider, d llm.Detection) {
+	cur, ok := r.Config.Find(was.Name)
+	if !ok || cur != was {
+		return
+	}
+	cur.API, cur.BaseURL = d.API, d.BaseURL
+	r.Config.Replace(cur.Name, cur)
+	if err := r.Config.Save(); err != nil {
+		fmt.Fprintln(r.Out, "warning: couldn't save config:", err)
 	}
 }
 
 func (r *REPL) Run() error {
 	fmt.Fprintln(r.Out, "ogsa — type /help for commands, /exit to quit")
 	r.printCurrent()
+	if p, ok := r.Config.Active(); ok && strings.HasPrefix(keyStatus(p), "⚠") {
+		fmt.Fprintf(r.Out, "%s: %s — run /model to fix it\n", p.Name, keyStatus(p))
+	}
 	for {
 		line, err := r.prompt("\n> ")
 		if errors.Is(err, io.EOF) {
@@ -56,6 +78,10 @@ func (r *REPL) Run() error {
 		}
 		if strings.HasPrefix(line, "/") {
 			quit, err := r.command(line)
+			if errors.Is(err, io.EOF) {
+				fmt.Fprintln(r.Out)
+				return nil
+			}
 			if err != nil {
 				fmt.Fprintln(r.Out, "error:", err)
 			}
@@ -125,6 +151,9 @@ func (r *REPL) chat(text string) error {
 		return nil
 	}
 	if err != nil && !errors.Is(err, agent.ErrRepeatedFailure) {
+		if p, ok := r.Config.Active(); ok {
+			return errors.New(explainErr(err, p))
+		}
 		return err
 	}
 	r.history = append(msgs, turn...)
@@ -153,8 +182,7 @@ func (r *REPL) hooks(ctx context.Context) agent.Hooks {
 			if err != nil || ctx.Err() != nil {
 				return false
 			}
-			answer = strings.ToLower(answer)
-			return answer == "y" || answer == "yes"
+			return isYes(answer)
 		},
 	}
 }

@@ -73,7 +73,7 @@ func TestModelPickFromList(t *testing.T) {
 }
 
 func TestModelAddProviderThenChat(t *testing.T) {
-	input := "/model\na\nhome\nhttps://llm.home/v1/\nHOME_KEY\n1\nhello\nagain\n"
+	input := "/model\na\nhome\nhttps://llm.home/v1/\n$HOME_KEY\n1\nhello\nagain\n"
 	r, out, seen := run(t, input)
 
 	p, ok := r.Config.Find("home")
