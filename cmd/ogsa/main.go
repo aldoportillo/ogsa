@@ -7,6 +7,7 @@ import (
 	"github.com/aldoportillo/ogsa/internal/cli"
 	"github.com/aldoportillo/ogsa/internal/config"
 	"github.com/aldoportillo/ogsa/internal/tools"
+	"golang.org/x/term"
 )
 
 func main() {
@@ -39,8 +40,14 @@ func run() error {
 	r.WorkDir = root.Dir
 	r.Tools = append(root.ReadOnly(), root.Mutating()...)
 	r.Color = isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == ""
-	if isTerminal(os.Stdin) {
-		r.ReadSecret = cli.TerminalSecretReader(os.Stdin, os.Stdout)
+	if isTerminal(os.Stdout) {
+		r.Width = func() int {
+			w, _, err := term.GetSize(int(os.Stdout.Fd()))
+			if err != nil {
+				return 80
+			}
+			return w
+		}
 	}
 	return r.Run()
 }

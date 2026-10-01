@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/aldoportillo/ogsa/internal/config"
 	"github.com/aldoportillo/ogsa/internal/llm"
@@ -277,7 +278,7 @@ func (r *REPL) providerForm(cur config.Provider, editing bool) (config.Provider,
 		fmt.Fprintln(r.Out, " ", n)
 	}
 
-	fmt.Fprintln(r.Out, "\nAPI key: paste it below; it won't show as you type. Leave it empty for servers")
+	fmt.Fprintln(r.Out, "\nAPI key: paste it below; it's cleared from the screen once entered. Leave it empty for servers")
 	fmt.Fprintln(r.Out, "that don't need one, like Ollama on this machine.")
 	hasKey := editing && (cur.Key != "" || validKeyVar(cur.APIKeyEnv))
 	label = "API key [enter = none]: "
@@ -516,8 +517,15 @@ func (r *REPL) askSecret(label string, validate func(string) (string, error)) (s
 }
 
 func (r *REPL) readSecret(label string) (string, error) {
-	if r.ReadSecret == nil {
-		return r.prompt(label)
+	s, err := r.prompt(label)
+	if err != nil || r.Width == nil || s == "" || s == "-" || strings.HasPrefix(s, "$") {
+		return s, err
 	}
-	return r.ReadSecret(label)
+	w := max(r.Width(), 1)
+	lines := (utf8.RuneCountInString(label+s) + w - 1) / w
+	for range lines {
+		fmt.Fprint(r.Out, "\x1b[1A\x1b[2K")
+	}
+	fmt.Fprintf(r.Out, "\r%s(key entered, %d characters)\n", label, len(s))
+	return s, nil
 }

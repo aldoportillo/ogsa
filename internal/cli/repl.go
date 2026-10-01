@@ -21,7 +21,7 @@ type REPL struct {
 	In          *bufio.Reader
 	Out         io.Writer
 	NewProvider func(config.Provider) llm.Provider
-	ReadSecret  func(label string) (string, error)
+	Width       func() int
 	Tools       []agent.Tool
 	WorkDir     string
 	Color       bool

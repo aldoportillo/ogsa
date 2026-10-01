@@ -56,7 +56,7 @@ func TestAddStoresPastedKey(t *testing.T) {
 	if !ok || p.Key != fakeSecret || p.APIKeyEnv != "" {
 		t.Fatalf("key not stored (found=%v, stored=%v)", ok, p.Key == fakeSecret)
 	}
-	for _, want := range []string{"won't show as you type", "readable only by you", "key saved"} {
+	for _, want := range []string{"cleared from the screen once entered", "readable only by you", "key saved"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q", want)
 		}
@@ -357,5 +357,28 @@ func TestValidateKeyInput(t *testing.T) {
 		if err != nil && strings.Contains(err.Error(), in) {
 			t.Errorf("error echoes the input: %v", err)
 		}
+	}
+}
+
+func TestPastedKeyIsErasedFromScreen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg, _ := config.Load(path)
+	var out strings.Builder
+	var seen []llm.Request
+	var checks int
+	r := New(cfg, strings.NewReader("/model\na\nwork\nhttps://x/v1\n"+fakeSecret+"\nq\n"), &out)
+	r.NewProvider = func(p config.Provider) llm.Provider {
+		return fakeProvider{models: []string{"m"}, seen: &seen, support: llm.ToolsSupported, checks: &checks}
+	}
+	r.Width = func() int { return 30 }
+	if err := r.Run(); err != nil {
+		t.Fatal(err)
+	}
+	o := out.String()
+	label := "API key [enter = none]: "
+	wantLines := (len(label) + len(fakeSecret) + 29) / 30
+	erase := strings.Repeat("\x1b[1A\x1b[2K", wantLines) + "\r" + label + "(key entered, 31 characters)"
+	if !strings.Contains(o, erase) {
+		t.Fatalf("key not erased over %d lines:\n%q", wantLines, o)
 	}
 }
