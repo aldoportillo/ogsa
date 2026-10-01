@@ -49,7 +49,7 @@ func Run(ctx context.Context, p llm.Provider, model string, tools []Tool, histor
 	for range MaxSteps {
 		reply, err := p.Chat(ctx, llm.Request{Model: model, Messages: msgs, Tools: specs}, h.OnText)
 		if err != nil {
-			return nil, err
+			return msgs[start:], err
 		}
 		msgs = append(msgs, reply)
 		if len(reply.ToolCalls) == 0 {
@@ -57,6 +57,10 @@ func Run(ctx context.Context, p llm.Provider, model string, tools []Tool, histor
 		}
 		repeated := false
 		for _, call := range reply.ToolCalls {
+			if ctx.Err() != nil {
+				msgs = append(msgs, llm.Message{Role: llm.RoleTool, ToolCallID: call.ID, Content: "error: cancelled by the user before this ran"})
+				continue
+			}
 			content, failed := runTool(ctx, byName, call, h)
 			if failed {
 				key := call.Name + "\x00" + call.Arguments
@@ -73,8 +77,11 @@ func Run(ctx context.Context, p llm.Provider, model string, tools []Tool, histor
 		if repeated {
 			return msgs[start:], ErrRepeatedFailure
 		}
+		if err := ctx.Err(); err != nil {
+			return msgs[start:], err
+		}
 	}
-	return nil, fmt.Errorf("stopped after %d model calls without a final answer", MaxSteps)
+	return msgs[start:], fmt.Errorf("stopped after %d model calls without a final answer", MaxSteps)
 }
 
 func runTool(ctx context.Context, byName map[string]Tool, call llm.ToolCall, h Hooks) (string, bool) {

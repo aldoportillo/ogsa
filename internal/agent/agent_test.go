@@ -212,3 +212,48 @@ func TestDifferentFailingCallsDontTrip(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+type cancelTool struct {
+	cancel context.CancelFunc
+	runs   *int
+}
+
+func (cancelTool) Spec() llm.ToolSpec { return llm.ToolSpec{Name: "slow"} }
+
+func (t cancelTool) Run(context.Context, json.RawMessage) (string, error) {
+	*t.runs++
+	t.cancel()
+	return "partial work", nil
+}
+
+func TestCancelKeepsCompletedWork(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runs := 0
+	two := llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+		{ID: "a", Name: "slow", Arguments: "{}"},
+		{ID: "b", Name: "slow", Arguments: "{}"},
+	}}
+	p := &scripted{replies: []llm.Message{two, {Role: llm.RoleAssistant, Content: "unreached"}}}
+	turn, err := Run(ctx, p, "m", []Tool{cancelTool{cancel, &runs}}, nil, Hooks{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if runs != 1 {
+		t.Fatalf("tool ran %d times after cancel", runs)
+	}
+	if len(turn) != 3 || turn[1].Content != "partial work" || !strings.Contains(turn[2].Content, "cancelled") {
+		t.Fatalf("turn = %+v", turn)
+	}
+	if len(p.reqs) != 1 {
+		t.Fatal("asked the model again after cancel")
+	}
+}
+
+func TestErrorKeepsCompletedSteps(t *testing.T) {
+	p := &scripted{replies: []llm.Message{call("c", "echo", `{"text":"x"}`)}} // then "script exhausted"
+	turn, err := Run(context.Background(), p, "m", []Tool{echoTool{}}, nil, Hooks{})
+	if err == nil || len(turn) != 2 || turn[1].Content != "echo: x" {
+		t.Fatalf("turn = %+v, err = %v", turn, err)
+	}
+}
