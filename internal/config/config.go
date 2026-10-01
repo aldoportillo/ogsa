@@ -4,19 +4,28 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/aldoportillo/ogsa/internal/llm"
 )
 
 type Provider struct {
-	Name      string `json:"name"`
-	BaseURL   string `json:"base_url"`
-	APIKeyEnv string `json:"api_key_env,omitempty"`
+	Name      string  `json:"name"`
+	BaseURL   string  `json:"base_url"`
+	Key       string  `json:"api_key,omitempty"`
+	APIKeyEnv string  `json:"api_key_env,omitempty"`
+	API       llm.API `json:"api,omitempty"`
 }
 
 func (p Provider) APIKey() string {
+	if p.Key != "" {
+		return p.Key
+	}
 	if p.APIKeyEnv == "" {
 		return ""
 	}
@@ -51,8 +60,7 @@ func (c *Config) SetModelInfo(provider, model string, info ModelInfo) {
 func Default() *Config {
 	return &Config{
 		Providers: []Provider{
-			{Name: "ollama", BaseURL: "http://localhost:11434/v1"},
-			{Name: "litellm", BaseURL: "http://localhost:4000/v1", APIKeyEnv: "LITELLM_API_KEY"},
+			{Name: "ollama", BaseURL: "http://localhost:11434/v1", API: llm.APICompat},
 		},
 		Provider: "ollama",
 	}
@@ -94,10 +102,13 @@ func (c *Config) Save() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(c.path, append(b, '\n'), 0o644)
+	if err := os.WriteFile(c.path, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(c.path, 0o600)
 }
 
 func (c *Config) Active() (Provider, bool) {
@@ -122,3 +133,44 @@ func (c *Config) Upsert(p Provider) {
 	}
 	c.Providers = append(c.Providers, p)
 }
+
+func (c *Config) Replace(old string, p Provider) {
+	for i := range c.Providers {
+		if c.Providers[i].Name != old {
+			continue
+		}
+		c.Providers[i] = p
+		if p.Name != old {
+			renamed := map[string]ModelInfo{}
+			for key, info := range c.Models {
+				if model, ok := strings.CutPrefix(key, old+"/"); ok {
+					delete(c.Models, key)
+					renamed[p.Name+"/"+model] = info
+				}
+			}
+			maps.Copy(c.Models, renamed)
+			if c.Provider == old {
+				c.Provider = p.Name
+			}
+		}
+		return
+	}
+}
+
+func (c *Config) Remove(name string) {
+	c.Providers = slices.DeleteFunc(c.Providers, func(p Provider) bool { return p.Name == name })
+	for key := range c.Models {
+		if strings.HasPrefix(key, name+"/") {
+			delete(c.Models, key)
+		}
+	}
+	if c.Provider == name {
+		c.Provider, c.Model = "", ""
+	}
+}
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func ValidEnvName(s string) bool { return envName.MatchString(s) }
+
+func (c *Config) File() string { return c.path }

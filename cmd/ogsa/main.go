@@ -39,6 +39,9 @@ func run() error {
 	r.WorkDir = root.Dir
 	r.Tools = append(root.ReadOnly(), root.Mutating()...)
 	r.Color = isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == ""
+	if isTerminal(os.Stdin) {
+		r.ReadSecret = cli.TerminalSecretReader(os.Stdin, os.Stdout)
+	}
 	return r.Run()
 }
 
