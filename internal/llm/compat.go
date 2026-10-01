@@ -51,14 +51,21 @@ func (c *CompatClient) newRequest(ctx context.Context, method, path string, body
 }
 
 func (c *CompatClient) do(req *http.Request) (*http.Response, error) {
-	resp, err := c.HTTP.Do(req)
+	return doHTTP(c.HTTP, req)
+}
+
+func doHTTP(hc *http.Client, req *http.Request) (*http.Response, error) {
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode/100 != 2 {
 		defer resp.Body.Close()
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("%s %s: %s: %s", req.Method, req.URL, resp.Status, strings.TrimSpace(string(msg)))
+		return nil, &HTTPError{Method: req.Method, URL: req.URL.String(), StatusCode: resp.StatusCode, Status: resp.Status, Body: strings.TrimSpace(string(msg))}
 	}
 	return resp, nil
 }

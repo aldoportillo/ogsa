@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 type Role string
@@ -42,4 +43,15 @@ type Request struct {
 type Provider interface {
 	ListModels(ctx context.Context) ([]string, error)
 	Chat(ctx context.Context, req Request, onDelta func(string)) (Message, error)
+}
+
+type HTTPError struct {
+	Method, URL string
+	StatusCode  int
+	Status      string
+	Body        string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("%s %s: %s: %s", e.Method, e.URL, e.Status, e.Body)
 }
